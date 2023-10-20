@@ -66,45 +66,54 @@ async function recordData(): Promise<void> {
       const timestamp = new Date();
       const spotifyData = response.data as NowPlayingTrack;
 
-      if (response.status != 204 && spotifyData?.item.id) {
-        appRunning = true;
+      if (response.status === 429) {
+        // Handle rate limit error
+        const retryAfter = Number(response.headers['retry-after']) || 60; // Default to 60 seconds
+        console.log(`Rate limit exceeded. Waiting for ${retryAfter} seconds.`);
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+        continue; // Skip the rest of the loop and try the request again.
+      }
+      else {
+        if (response.status != 204 && spotifyData?.item.id) {
+          appRunning = true;
 
-        const trackFeatures = await getAudioFeatures(spotifyData.item.id);
-        const artistInfo = await getArtistInfo(spotifyData.item.artists[0].id);
-        const albumInfo = await getAlbumInfo(spotifyData.item.album.id);
+          const trackFeatures = await getAudioFeatures(spotifyData.item.id);
+          const artistInfo = await getArtistInfo(spotifyData.item.artists[0].id);
+          const albumInfo = await getAlbumInfo(spotifyData.item.album.id);
 
-        const result = durationMeasurer.checkTimer(
-          spotifyData,
-          { trackFeatures, artistInfo, albumInfo },
-          timestamp
-        );
-
-        if (result) {
-          // If there was a change
-          writeToDb(
-            result.track,
-            result.additionalTrackInfo.trackFeatures,
-            result.additionalTrackInfo.artistInfo,
-            result.additionalTrackInfo.albumInfo,
-            result.seconds,
+          const result = durationMeasurer.checkTimer(
+            spotifyData,
+            { trackFeatures, artistInfo, albumInfo },
             timestamp
           );
+
+          if (result) {
+            // If there was a change
+            writeToDb(
+              result.track,
+              result.additionalTrackInfo.trackFeatures,
+              result.additionalTrackInfo.artistInfo,
+              result.additionalTrackInfo.albumInfo,
+              result.seconds,
+              timestamp
+            );
+          }
+        } else if (appRunning) {
+          // Spotify app was closed
+          console.log("Spotify was closed");
+          const result = durationMeasurer.quitApp(timestamp);
+          if (result.seconds != 2) {
+            writeToDb(
+              result.track,
+              result.additionalTrackInfo.trackFeatures,
+              result.additionalTrackInfo.artistInfo,
+              result.additionalTrackInfo.albumInfo,
+              result.seconds,
+              timestamp
+            );
+          }
+          appRunning = false;
         }
-      } else if (appRunning) {
-        // Spotify app was closed
-        console.log("Spotify was closed");
-        const result = durationMeasurer.quitApp(timestamp);
-        if (result.seconds != 2) {
-          writeToDb(
-            result.track,
-            result.additionalTrackInfo.trackFeatures,
-            result.additionalTrackInfo.artistInfo,
-            result.additionalTrackInfo.albumInfo,
-            result.seconds,
-            timestamp
-          );
-        }
-        appRunning = false;
       }
     } catch (e) {
       console.error(e);
